@@ -81,6 +81,7 @@ persist-tun
 
 </dh>
 
+key-direction 1
 <tls-auth>
 `cat /tmp/$server_$username/ta.key`
 
