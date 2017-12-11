@@ -1,7 +1,7 @@
 #!/bin/bash
 
 curdir=`pwd`
-server="vpn.rwp2.com"
+server=""
 port="1194"
 proto="udp"
 
