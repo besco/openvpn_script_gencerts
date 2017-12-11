@@ -1,7 +1,10 @@
-#!/bin/sh
+#!/bin/bash
 
 curdir=`pwd`
-server=""
+server="vpn.rwp2.com"
+port="1194"
+proto="udp"
+
 
 echo -n "Enter username: "
 read username
@@ -15,15 +18,14 @@ if [ -z $server ]; then
 fi
 
 
-cd  /usr/share/easy-rsa/2.0/
+cd  /usr/share/easy-rsa/
 . ./vars
 ./build-key --batch $username
 
 mkdir -p /tmp/$server_$username
-#mkdir -p /var/www/keys/$username/{archive,configs,keys}
-#cp /etc/openvpn/keys/{$username.crt,$username.key,dh2048.pem,ca.crt,ta.key} /var/www/keys/$username/keys/
-#htpasswd -bc /var/www/keys/$username/passwd $username $password
-#chown -R apache /var/www/keys/$username
+mkdir -p /var/www/keys/$username/{archive,configs,keys}
+cp /etc/openvpn/keys/{$username.crt,$username.key,dh2048.pem,ca.crt,ta.key} /var/www/keys/$username/keys/
+htpasswd -bc /var/www/keys/$username/passwd $username $password
 
 cp /etc/openvpn/keys/{$username.crt,$username.key,dh2048.pem,ca.crt,ta.key} /tmp/$server_$username
 
@@ -32,7 +34,7 @@ client
 dev tun
 proto udp
 #### New server
-remote $server 443
+remote $server 1194
 
 nobind
 persist-key
@@ -45,6 +47,48 @@ tls-auth ta.key 1
 # comp-lzo
 verb 3
 topology subnet
+cipher AES-256-CBC
+keysize 256
+EOF
+
+cat > /tmp/$server_$username/$username-inone.conf << EOF
+client
+dev tun
+proto udp
+#### New server
+remote $server 1194
+
+nobind
+persist-key
+persist-tun
+<ca>
+`cat /tmp/$server_$username/ca.crt`
+
+</ca>
+
+<key>
+`cat /tmp/$server_$username/$username.key`
+
+</key>
+
+<cert>
+`cat /tmp/$server_$username/$username.crt`
+
+</cert>
+
+<dh>
+`cat /tmp/$server_$username/dh2048.pem`
+
+</dh>
+
+<tls-auth>
+`cat /tmp/$server_$username/ta.key`
+
+</tls-auth>
+# comp-lzo
+verb 3
+topology subnet
+cipher AES-256-CBC
 EOF
 
 cat > /tmp/$server_$username/$username.conf << EOF
@@ -52,7 +96,7 @@ client
 dev tun
 proto udp
 #### New server
-remote $server 443
+remote $server 1194
 
 nobind
 persist-key
@@ -65,6 +109,8 @@ tls-auth ta.key 1
 # comp-lzo
 verb 3
 topology subnet
+cipher AES-256-CBC
+keysize 256
 EOF
 
 cd /tmp/$server_$username/
@@ -85,7 +131,7 @@ verb 4
 connect-retry 2 300
 resolv-retry 60
 dev tun
-remote server 443 udp
+remote server 1194 udp
 <ca>
 `cat ./ca.crt`
 
@@ -106,6 +152,7 @@ remote server 443 udp
 
 </dh>
 
+key-direction 1
 <tls-auth>
 `cat ./ta.key`
 
@@ -118,33 +165,36 @@ key-direction 1
 remote-cert-tls server
 # Use system proxy setting
 management-query-proxy
+cipher AES-256-CBC
+keysize 256
 EOF
 
 
-#cat > /var/www/keys/$username/.htaccess << EOF
-#AuthType Basic
-#AuthName "Password Required (user: $username)"
-#AuthUserFile "/var/www/keys/$username/passwd"
-#Require valid-user
+cat > /var/www/keys/$username/.htaccess << EOF
+AuthType Basic
+AuthName "Password Required (user: $username)"
+AuthUserFile "/var/www/keys/$username/passwd"
+Require valid-user
 
-#<Files ./passwd>
-#    Order Allow,Deny
-#    Deny from all
-#</Files>
+<Files ./passwd>
+    Order Allow,Deny
+    Deny from all
+</Files>
 
-#<FilesMatch "\.(?i:doc|odf|pdf|rtf|txt|conf|key|crt|pem|ovpn)$">
-#  Header set Content-Disposition attachment
-#</FilesMatch>
-#EOF
+<FilesMatch "\.(?i:doc|odf|pdf|rtf|txt|conf|key|crt|pem|ovpn)$">
+  Header set Content-Disposition attachment
+</FilesMatch>
+EOF
 
 rm -f /etc/openvpn/clients/$username.tar.gz
-tar --no-recursion -zcf /etc/openvpn/clients/$username.tar.gz ./$username.crt ./$username.key ./dh2048.pem ./ca.crt ./ta.key ./$username.ovpn ./$username.conf ./android.conf
-#cp ./{$username.ovpn,$username.conf,android.conf} /var/www/keys/$username/configs/
-#cp /etc/openvpn/clients/$username.tar.gz /var/www/keys/$username/archive/
+tar --no-recursion -zcf /etc/openvpn/clients/$username.tar.gz ./$username.crt ./$username-inone.conf ./$username.key ./dh2048.pem ./ca.crt ./ta.key ./$username.ovpn ./$username.conf ./android.conf
+cp ./{$username.ovpn,$username.conf,android.conf,$username-inone.conf} /var/www/keys/$username/configs/
+cp /etc/openvpn/clients/$username.tar.gz /var/www/keys/$username/archive/
 
 rm -rf /tmp/$server_$username
+chown -R www-data /var/www/keys/$username
 
 echo ""
 echo "Created archive to /etc/openvpn/clients/$username.tar.gz"
-#echo "Files also available via web on https://$server/$username"
+echo "Files also available via web on https://$server/$username"
 echo ""
