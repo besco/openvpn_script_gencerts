@@ -1,10 +1,15 @@
 #!/bin/bash
 
 curdir=`pwd`
-server="vpn.rwp2.com"
+server=""
 port="1194"
 proto="udp"
 
+genpw() {
+    local l=$1
+        [ "$l" == "" ] && l=16
+        tr -dc A-Za-z0-9_ < /dev/urandom | head -c ${l} | xargs
+}
 
 echo -n "Enter username: "
 read username
@@ -16,7 +21,6 @@ if [ -z $server ]; then
     echo -n "Enter server addr: "
     read server
 fi
-
 
 cd  /usr/share/easy-rsa/
 . ./vars
@@ -32,9 +36,9 @@ cp /etc/openvpn/keys/{$username.crt,$username.key,dh2048.pem,ca.crt,ta.key} /tmp
 cat > /tmp/$server_$username/$username.ovpn << EOF
 client
 dev tun
-proto udp
+proto $proto
 #### New server
-remote $server 1194
+remote $server $port
 
 nobind
 persist-key
@@ -54,9 +58,9 @@ EOF
 cat > /tmp/$server_$username/$username-inone.conf << EOF
 client
 dev tun
-proto udp
+proto $proto
 #### New server
-remote $server 1194
+remote $server $port
 
 nobind
 persist-key
@@ -81,6 +85,7 @@ persist-tun
 
 </dh>
 
+key-direction 1
 <tls-auth>
 `cat /tmp/$server_$username/ta.key`
 
@@ -94,9 +99,9 @@ EOF
 cat > /tmp/$server_$username/$username.conf << EOF
 client
 dev tun
-proto udp
+proto $proto
 #### New server
-remote $server 1194
+remote $server $port
 
 nobind
 persist-key
@@ -131,7 +136,7 @@ verb 4
 connect-retry 2 300
 resolv-retry 60
 dev tun
-remote server 1194 udp
+remote server $port $proto
 <ca>
 `cat ./ca.crt`
 
