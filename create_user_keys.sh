@@ -1,37 +1,65 @@
 #!/bin/bash
 
 curdir=`pwd`
+arcs_dir="/etc/openvpn"
 server=""
 port="1194"
-proto="udp"
+proto="tcp"
 
 genpw() {
-    local l=$1
-        [ "$l" == "" ] && l=16
-        tr -dc A-Za-z0-9_ < /dev/urandom | head -c ${l} | xargs
+    len=16
+    tr -dc A-Za-z0-9_ < /dev/urandom | head -c ${len} | xargs
 }
 
-echo -n "Enter username: "
-read username
+if [ ! -d $arcs_dir/pki ]; then
+    echo "It seems the easyrsa is not initialized"
+    echo ""
+    echo "Run commands:"
+    echo "easyrsa init-pki"
+    echo "easyrsa build-ca nopass"
+    echo "easyrsa gen-req srv-openvpn nopass"
+    echo "easyrsa sign-req server srv-openvpn"
+    exit 1
+fi
 
-echo -n "Enter password: "
-read password
+if [ ! -d $arcs_dir/clients ]; then
+    mkdir -p $arcs_dir/clients
+fi
+
+if [ -z $1 ]; then
+    echo -n "Enter username: "
+    read username
+else
+    username=$1
+fi
+
+if [ -z $2 ]; then
+    #echo -n "Enter password: "
+    #read password
+    password=$(genpw)
+else
+    password=$2
+fi
 
 if [ -z $server ]; then
     echo -n "Enter server addr: "
     read server
 fi
 
-cd  /usr/share/easy-rsa/
-. ./vars
-./build-key --batch $username
+easyrsa --batch --req-cn=$username gen-req $username nopass
+if [ $? -eq 0 ]; then
+    easyrsa --batch sign-req client $username
+else
+    echo "Something went wrong!"
+    exit 1
+fi
 
 mkdir -p /tmp/$server_$username
-mkdir -p /var/www/keys/$username/{archive,configs,keys}
-cp /etc/openvpn/keys/{$username.crt,$username.key,dh2048.pem,ca.crt,ta.key} /var/www/keys/$username/keys/
-htpasswd -bc /var/www/keys/$username/passwd $username $password
+cp $arcs_dir/pki/issued/$username.crt /tmp/$server_$username
+cp $arcs_dir/pki/private/$username.key /tmp/$server_$username
+cp $arcs_dir/pki/ca.crt /tmp/$server_$username
+echo >./ccd/$username
 
-cp /etc/openvpn/keys/{$username.crt,$username.key,dh2048.pem,ca.crt,ta.key} /tmp/$server_$username
 
 cat > /tmp/$server_$username/$username.ovpn << EOF
 client
@@ -46,8 +74,8 @@ persist-tun
 ca "ca.crt"
 cert "$username.crt"
 key "$username.key"
-dh "dh2048.pem"
-tls-auth ta.key 1
+# dh "dh2048.pem"
+# tls-auth ta.key 1
 # comp-lzo
 verb 3
 topology subnet
@@ -55,7 +83,7 @@ cipher AES-256-CBC
 keysize 256
 EOF
 
-cat > /tmp/$server_$username/$username-inone.conf << EOF
+cat > /tmp/$server_$username/$username-inone.ovpn << EOF
 client
 dev tun
 proto $proto
@@ -80,20 +108,20 @@ persist-tun
 
 </cert>
 
-<dh>
-`cat /tmp/$server_$username/dh2048.pem`
+#<dh>
+#</dh>
 
-</dh>
-
-key-direction 1
-<tls-auth>
-`cat /tmp/$server_$username/ta.key`
-
-</tls-auth>
+# key-direction 1
+# <tls-auth>
+# </tls-auth>
 # comp-lzo
+
 verb 3
 topology subnet
 cipher AES-256-CBC
+
+remote-cert-tls server
+auth-user-pass
 EOF
 
 cat > /tmp/$server_$username/$username.conf << EOF
@@ -109,13 +137,15 @@ persist-tun
 ca "ca.crt"
 cert "$username.crt"
 key "$username.key"
-dh "dh2048.pem"
-tls-auth ta.key 1
+# dh "dh2048.pem"
+# tls-auth ta.key 1
 # comp-lzo
 verb 3
 topology subnet
 cipher AES-256-CBC
 keysize 256
+remote-cert-tls server
+auth-user-pass
 EOF
 
 cd /tmp/$server_$username/
@@ -136,7 +166,7 @@ verb 4
 connect-retry 2 300
 resolv-retry 60
 dev tun
-remote server $port $proto
+remote $server $port $proto
 <ca>
 `cat ./ca.crt`
 
@@ -152,54 +182,43 @@ remote server $port $proto
 
 </cert>
 
-<dh>
-`cat ./dh2048.pem`
+#<dh>
+#</dh>
 
-</dh>
+#key-direction 1
+#<tls-auth>
+#</tls-auth>
 
-key-direction 1
-<tls-auth>
-`cat ./ta.key`
-
-</tls-auth>
-
-key-direction 1
 # route-ipv6 ::/0
 # route 0.0.0.0 0.0.0.0 vpn_gateway
 # verify-x509-name $server name
-remote-cert-tls server
+# remote-cert-tls server
 # Use system proxy setting
+
 management-query-proxy
 cipher AES-256-CBC
 keysize 256
 EOF
 
+cat > /tmp/$server_$username/lopass.txt << EOF
+$username
+$password
 
-cat > /var/www/keys/$username/.htaccess << EOF
-AuthType Basic
-AuthName "Password Required (user: $username)"
-AuthUserFile "/var/www/keys/$username/passwd"
-Require valid-user
-
-<Files ./passwd>
-    Order Allow,Deny
-    Deny from all
-</Files>
-
-<FilesMatch "\.(?i:doc|odf|pdf|rtf|txt|conf|key|crt|pem|ovpn)$">
-  Header set Content-Disposition attachment
-</FilesMatch>
 EOF
 
-rm -f /etc/openvpn/clients/$username.tar.gz
-tar --no-recursion -zcf /etc/openvpn/clients/$username.tar.gz ./$username.crt ./$username-inone.conf ./$username.key ./dh2048.pem ./ca.crt ./ta.key ./$username.ovpn ./$username.conf ./android.conf
-cp ./{$username.ovpn,$username.conf,android.conf,$username-inone.conf} /var/www/keys/$username/configs/
-cp /etc/openvpn/clients/$username.tar.gz /var/www/keys/$username/archive/
+# Create user on mikrotik
+# /ppp secret add name=$username password=$password service=ovpn
+
+cd /tmp/$server_$username
+if [ -f $arcs_dir/clients/$username.tar.gz ]; then
+    rm -f $arcs_dir/clients/$username.tar.gz
+fi
+tar --no-recursion -zcf $arcs_dir/clients/$username.tar.gz ./$username.crt ./$username-inone.ovpn ./$username.key ./ca.crt ./$username.ovpn ./$username.conf ./android.conf ./lopass.txt
 
 rm -rf /tmp/$server_$username
-chown -R www-data /var/www/keys/$username
 
 echo ""
-echo "Created archive to /etc/openvpn/clients/$username.tar.gz"
-echo "Files also available via web on https://$server/$username"
+echo "Created archive to $arcs_dir/clients/$username.tar.gz"
+echo "Username: $username"
+echo "Password: $password"
 echo ""
